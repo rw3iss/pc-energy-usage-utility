@@ -69,8 +69,7 @@ def stacked_bars(
     max_ticks = max(1, min(5, height // 2))
     step = nice_step(top_value, max_ticks)
     ticks = max(1, math.ceil(top_value / step)) if top_value > 0 else 1
-    rows_per_tick = max(1, height // ticks)
-    rows = rows_per_tick * ticks
+    rows = max(height, 1)
     top = step * ticks
     unit = top / rows
 
@@ -84,8 +83,10 @@ def stacked_bars(
     lines: list[Line] = []
     for r in range(rows - 1, -1, -1):
         lo, hi = r * unit, (r + 1) * unit
-        label_here = (r + 1) % rows_per_tick == 0
-        axis = f"{tick_fmt(hi):>{axis_w - 2}} ┤" if label_here else " " * (axis_w - 2) + " │"
+        # the tick whose value falls in this row's range, if any
+        k = math.floor(hi / step + 1e-9)
+        tick = k * step if k >= 1 and k * step > lo + 1e-9 else None
+        axis = f"{tick_fmt(tick):>{axis_w - 2}} ┤" if tick is not None else " " * (axis_w - 2) + " │"
         line: Line = [(axis, "dim")]
         for b in bars:
             line.extend(_cell(b, lo, hi, unit, r, bar_w, ascii_mode))

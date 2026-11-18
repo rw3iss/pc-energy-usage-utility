@@ -127,6 +127,7 @@ class MonthScreen(BaseScreen):
             label = name if wide or key != "measured" else "Meas"
             active = key == self.pc.devices
             left.append((f"[{label}]" if active else f" {label} ", "sel" if active else "dim"))
+            left.append((" ", ""))
         right = health_segments(self.health, self.age, short=not wide)
         used = sum(len(t) for t, _ in left) + sum(len(t) for t, _ in right)
         return [*left, (" " * max(width - used - 1, 1), ""), *right]
