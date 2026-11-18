@@ -1,0 +1,32 @@
+# pcenergy collector: reads CPU (RAPL) and GPU (NVML) energy counters once a minute and writes
+# /var/lib/pcenergy/energy.db. Runs as root only because the RAPL counters are root-only.
+# Installed by packaging/install.sh.
+[Unit]
+Description=pcenergy energy collector
+Documentation=https://github.com/rw3iss/pc-energy-usage-utility
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/opt/pcenergy/venv/bin/pcenergy collect
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONDONTWRITEBYTECODE=1
+StateDirectory=pcenergy
+StateDirectoryMode=0755
+UMask=0022
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+# NVML needs /dev/nvidia*: do not set PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
