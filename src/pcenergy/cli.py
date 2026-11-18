@@ -104,8 +104,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_tui(args: argparse.Namespace) -> int:
-    print("pcenergy: the terminal UI is not built yet; see `pcenergy --help`", file=sys.stderr)
-    return 1
+    from pcenergy.tui.app import run
+
+    color = False if (args.no_color or os.environ.get("NO_COLOR")) else None
+    return run(cfg.db_path(args.db), args.devices, bool(args.ascii), color)
 
 
 # ---------------------------------------------------------------- config
@@ -324,7 +326,7 @@ def _report(args: argparse.Namespace, kind: str) -> int:
     title = {"month": f"{p.start:%B %Y}", "week": f"Week {p.label}", "day": f"{p.start:%a %d %b %Y}"}[kind]
     rng = "" if kind == "day" else f"({p.range_text()})  "
     c.print([[(f" {title} ", "bold"), (f"{rng}devices: {c.devices}", "dim")]])
-    c.print(report.summary_lines(summ, "Total" if not summ.period.in_progress else "So far"))
+    c.print(report.summary_lines(summ, "Total" if not summ.period.in_progress else "So far", c.width))
     print()
     unit = c.settings["day_graph_unit"] if kind == "day" else "kWh"
     today = datetime.now(c.tz).date().isoformat()

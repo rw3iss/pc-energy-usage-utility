@@ -1,0 +1,67 @@
+/* pcenergy TUI. Most drawing is done by Canvas widgets; this file styles the modal panels. */
+
+Screen {
+    background: $background;
+}
+
+HelpScreen, SettingsScreen, ConfirmScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#help-box {
+    width: 92;
+    height: auto;
+    max-height: 90%;
+    border: round $accent;
+    background: $surface;
+    padding: 0 1;
+}
+
+#settings-box {
+    width: 96;
+    height: 90%;
+    border: round $accent;
+    background: $surface;
+    padding: 0 1;
+}
+
+#settings-box .group {
+    color: $accent;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#settings-box .row {
+    height: 3;
+}
+
+#settings-box .row Label {
+    width: 22;
+    padding-top: 1;
+}
+
+#settings-box .row Input, #settings-box .row Select {
+    width: 24;
+}
+
+#settings-box .row .help {
+    width: 1fr;
+    padding-top: 1;
+    color: $text-muted;
+}
+
+#settings-box .error {
+    color: $error;
+    height: auto;
+}
+
+#settings-buttons {
+    height: 3;
+    margin-top: 1;
+}
+
+#settings-status {
+    height: auto;
+    color: $warning;
+}

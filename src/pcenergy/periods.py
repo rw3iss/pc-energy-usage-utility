@@ -63,6 +63,9 @@ class Period:
     def contains(self, moment: datetime) -> bool:
         return self.start_ts <= moment.timestamp() < self.end_ts
 
+    def contains_date(self, d: date) -> bool:
+        return self.start.date() <= d < self.end.date()
+
     def days(self) -> list[date]:
         out, d = [], self.start.date()
         while d < self.end.date():

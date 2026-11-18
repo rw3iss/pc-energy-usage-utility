@@ -59,8 +59,12 @@ def stacked_bars(
     ascii_mode: bool = False,
     tick_fmt: Callable[[float], str] = _fmt_tick,
     show_labels: bool = True,
+    prefix: tuple[str, str] | None = None,
 ) -> list[Line]:
-    """Render ``bars`` into ``width`` × (``height`` + 2) cells: plot rows, axis row, label row."""
+    """Render ``bars`` into ``width`` × (``height`` + 2) cells: plot rows, axis row, label row.
+
+    ``prefix`` is a (text, style) drawn left of the labels, under the y axis (the TUI's "All").
+    """
     top_value = max((b.total for b in bars), default=0.0)
     max_ticks = max(1, min(5, height // 2))
     step = nice_step(top_value, max_ticks)
@@ -70,7 +74,7 @@ def stacked_bars(
     top = step * ticks
     unit = top / rows
 
-    axis_w = max(len(tick_fmt(top)), 1) + 2  # "400 ┤"
+    axis_w = max(len(tick_fmt(top)), 2 if prefix is None else 3) + 2  # "400 ┤"
     plot_w = max(width - axis_w, len(bars))
     n = max(len(bars), 1)
     slot = min(max(plot_w // n, 1), 8)
@@ -91,7 +95,7 @@ def stacked_bars(
         lines.append(line)
     lines.append([(" " * (axis_w - 2) + " └" + "─" * plot_w, "dim")])
     if show_labels:
-        lines.append(_label_row(bars, axis_w, slot))
+        lines.append(_label_row(bars, axis_w, slot, prefix))
     return lines
 
 
@@ -126,17 +130,32 @@ def _device_at(stack: list[tuple[str, float]], value: float) -> str:
     return stack[-1][0] if stack else "cpu"
 
 
-def _label_row(bars: list[Bar], axis_w: int, slot: int) -> Line:
+def _label_row(bars: list[Bar], axis_w: int, slot: int, prefix: tuple[str, str] | None) -> Line:
+    """Labels under the bars. The selected and today's labels always show; others show every N
+    bars and only where they do not touch another label."""
     longest = max((len(b.label) for b in bars), default=1)
     every = max(1, math.ceil((longest + 1) / slot))
-    line: Line = [(" " * axis_w, "")]
-    for i, b in enumerate(bars):
-        text = b.label if (i % every == 0 or b.selected or b.today) else ""
-        cell = text[: max(slot * every, slot)].ljust(slot)[:slot] if slot >= len(text) else text[:slot]
+    size = slot * len(bars)
+    chars, styles, used = [" "] * size, [""] * size, [False] * size
+    forced = [i for i, b in enumerate(bars) if b.selected or b.today]
+    regular = [i for i in range(len(bars)) if i % every == 0 and i not in forced]
+    for i in forced + regular:
+        b = bars[i]
+        start, end = i * slot, i * slot + len(b.label)
+        if end > size or any(used[max(start - 1, 0) : min(end + 1, size)]):
+            continue
         style = "sel" if b.selected else ("today" if b.today else "dim")
-        if not text:
-            style = ""
-        line.append((cell.ljust(slot), style))
+        for k, ch in enumerate(b.label):
+            chars[start + k], styles[start + k], used[start + k] = ch, style, True
+    if prefix:
+        line: Line = [(" ", ""), prefix, (" " * max(axis_w - 1 - len(prefix[0]), 0), "")]
+    else:
+        line = [(" " * axis_w, "")]
+    for ch, st in zip(chars, styles, strict=True):
+        if line and line[-1][1] == st:
+            line[-1] = (line[-1][0] + ch, st)
+        else:
+            line.append((ch, st))
     return line
 
 

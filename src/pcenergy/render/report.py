@@ -13,51 +13,65 @@ ESTIMATED = ("rest", "monitor")
 
 
 def _sep() -> tuple[str, str]:
-    return ("  │ ", "dim")
+    return (" │ ", "dim")
 
 
-def summary_lines(s: Summary, title: str) -> list[Line]:
-    """Two lines: totals, per-device split and averages; then projection and on-time."""
+def summary_lines(s: Summary, title: str, width: int = 200) -> list[Line]:
+    """Totals, per-device split, averages, projection and on-time, packed into as few lines as fit
+    in ``width`` (two lines on a wide terminal)."""
     est = s.total_is_estimate
-    first: Line = [
+    total: Line = [
         (f"{title}  ", "bold"),
         (fmt_energy(s.total_kwh, est), "bold"),
         (" wall" if est else " measured", "dim"),
         ("  ", ""),
         (fmt_cost(s.cost, s.currency_symbol), "cost"),
-        _sep(),
     ]
+    devices: Line = []
     for d in DEVICE_ORDER:
         if d in s.per_device_kwh:
-            first.append((f"{DEVICE_NAMES[d]} ", d))
-            first.append((f"{fmt_energy(s.per_device_kwh[d])}  ", ""))
-    first.append(_sep())
-    first.append((f"avg {fmt_watts(s.avg_w)}", ""))
+            devices += [(f"{DEVICE_NAMES[d]} ", d), (f"{fmt_energy(s.per_device_kwh[d])}  ", "")]
+    if devices:
+        devices[-1] = (devices[-1][0].rstrip(), "")
+    avg: Line = [(f"avg {fmt_watts(s.avg_w)}", "")]
     if s.peak:
         when = datetime.fromisoformat(s.peak.start)
-        stamp = f"{when:%H:%M}" if s.period.kind == "day" else f"{when:%Y-%m-%d %H:%M}"
-        first.append((f"  peak {stamp} ({fmt_watts(s.peak.watts)})", "dim"))
-
-    second: Line = []
+        stamp = f"{when:%H:%M}" if s.period.kind == "day" else f"{when:%b %d %H:%M}"
+        avg.append((f"  peak {stamp} ({fmt_watts(s.peak.watts)})", "dim"))
+    groups = [total, avg, devices]
+    second: list[Line] = []
     if s.projection:
-        second += [
-            ("Projected  ", "dim"),
-            (fmt_energy(s.projection.total_kwh, est), ""),
-            ("  ", ""),
-            (fmt_cost(s.projection.cost, s.currency_symbol), "cost"),
-            _sep(),
-        ]
-    elapsed = s.period.elapsed_hours
+        second.append(
+            [
+                ("Projected  ", "dim"),
+                (fmt_energy(s.projection.total_kwh, est), ""),
+                ("  ", ""),
+                (fmt_cost(s.projection.cost, s.currency_symbol), "cost"),
+            ]
+        )
     cov = f" ({s.coverage_pct:.0f} %)" if s.coverage_pct is not None else ""
-    second.append((f"on {s.on_hours:.0f} h of {elapsed:.0f} h{cov}", "dim"))
+    second.append([(f"on {s.on_hours:.0f} h of {s.period.elapsed_hours:.0f} h{cov}", "dim")])
     if s.fixed_fee:
-        second.append(_sep())
-        second.append((f"+ {fmt_cost(s.fixed_fee, s.currency_symbol)} fixed fee", "cost"))
+        second.append([(f"+ {fmt_cost(s.fixed_fee, s.currency_symbol)} fixed fee", "cost")])
     if s.details_kwh:
         detail = "  ".join(f"{k} {fmt_energy(v)}" for k, v in s.details_kwh.items())
-        second.append(_sep())
-        second.append((f"detail: {detail}", "dim"))
-    return [first, second]
+        second.append([(f"detail: {detail}", "dim")])
+    return pack([g for g in groups + second if g], width)
+
+
+def _len(line: Line) -> int:
+    return sum(len(t) for t, _ in line)
+
+
+def pack(groups: list[Line], width: int) -> list[Line]:
+    """Join groups with " │ " separators, starting a new line when the next group would not fit."""
+    lines: list[Line] = []
+    for g in groups:
+        if lines and _len(lines[-1]) + 3 + _len(g) <= width:
+            lines[-1] = [*lines[-1], _sep(), *g]
+        else:
+            lines.append(list(g))
+    return lines
 
 
 def series_bars(series: Series, unit: str = "kWh", selected: int | None = None, today: str | None = None):
@@ -90,12 +104,13 @@ def graph(
     ascii_mode: bool = False,
     selected: int | None = None,
     today: str | None = None,
+    prefix: tuple[str, str] | None = None,
 ) -> list[Line]:
     devices = [d for d in DEVICE_ORDER if any(d in b.per_device_kwh for b in series.buckets)]
     head: Line = [(f"  {unit}", "dim"), (" " * max(width - 12 - 12 * len(devices), 1), "")]
     head += legend(devices, ascii_mode)
     bars = series_bars(series, unit, selected, today)
-    return [head, *stacked_bars(bars, width, height, ascii_mode)]
+    return [head, *stacked_bars(bars, width, height, ascii_mode, prefix=prefix)]
 
 
 def table(header: list[str], rows: list[list[tuple[str, str]]], right: set[int]) -> list[Line]:
