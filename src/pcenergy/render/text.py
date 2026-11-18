@@ -28,6 +28,7 @@ STYLES: dict[str, tuple[str, str]] = {
     "sel": ("7", "reverse"),
     "today": ("4", "underline"),
     "missing": ("38;5;240", "#585858"),
+    "hl": ("48;5;236", "on #303030"),  # background of the selected graph column
 }
 
 DEVICE_ORDER = ("cpu", "gpu", "igpu", "rest", "monitor")

@@ -173,6 +173,17 @@ class Totals:
         return dc + (self.joules["monitor"] if "monitor" in keep else 0.0)
 
 
+def present_devices(conn: sqlite3.Connection, keep: tuple[str, ...], est: Estimate) -> tuple[str, ...]:
+    """The filtered devices that exist here: measured devices with a source, the rest estimate, and
+    monitors only when ``monitor_watts`` is set."""
+    have = {r[0] for r in conn.execute("SELECT DISTINCT device FROM sources WHERE in_total = 1")}
+    out = []
+    for d in keep:
+        if (d in MEASURED and d in have) or d == "rest" or (d == "monitor" and est.monitor_watts > 0):
+            out.append(d)
+    return tuple(out)
+
+
 def _source_map(conn: sqlite3.Connection) -> dict[str, tuple[str, bool]]:
     return {r[0]: (r[1], bool(r[2])) for r in conn.execute("SELECT id, device, in_total FROM sources")}
 
@@ -312,10 +323,7 @@ def summary(
     total_kwh = total.total_j(keep, est) / 3_600_000
     measured = sum(total.kwh(d) for d in keep if d in MEASURED)
     estimated = sum(total.kwh(d) for d in keep if d in ESTIMATED)
-    present = {d for d in DEVICES if total.joules[d] > 0} | {"cpu", "gpu"}
-    per_device = {d: total.kwh(d) for d in keep if d in present or d in ESTIMATED}
-    if est.monitor_watts == 0:
-        per_device.pop("monitor", None)
+    per_device = {d: total.kwh(d) for d in present_devices(conn, keep, est)}
     info = PeriodInfo.of(period, now)
     elapsed_s = info.elapsed_hours * 3600
     return Summary(
@@ -326,7 +334,7 @@ def summary(
         measured_kwh=measured,
         estimated_kwh=estimated,
         per_device_kwh=per_device,
-        details_kwh={k: v / 3_600_000 for k, v in sorted(total.details.items())},
+        details_kwh={k: v / 3_600_000 for k, v in sorted(total.details.items()) if "cpu" in keep},
         cost=total_kwh * est.price_per_kwh,
         currency_symbol=est.currency_symbol,
         fixed_fee=est.fixed_monthly_fee if period.kind == "month" else 0.0,
@@ -396,6 +404,7 @@ def series(
     now = time.time() if now is None else now
     tz = tz or period.start.tzinfo
     keep = filter_devices(devices, est)
+    shown = present_devices(conn, keep, est)
     hours = hourly_totals(conn, period.start_ts, period.end_ts, est)
     out = []
     for s, e, iso, label in _bucket_spans(period, bucket, week_start, tz):
@@ -408,7 +417,7 @@ def series(
             Bucket(
                 start=iso,
                 label=label,
-                per_device_kwh={d: t.kwh(d) for d in keep},
+                per_device_kwh={d: t.kwh(d) for d in shown},
                 total_kwh=total_j / 3_600_000,
                 on_s=t.on_s,
                 avg_w=(total_j / t.on_s) if t.on_s > 0 else None,

@@ -62,6 +62,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-v", "--verbose", action="store_true")
 
+    p = sub.add_parser("month", parents=common, help="month summary, daily graph and day table")
+    p.add_argument("period", nargs="?", help="YYYY-MM, -1 (previous), +1; default: current")
+    p = sub.add_parser("week", parents=common, help="week summary, day graph and table")
+    p.add_argument("period", nargs="?", help="YYYY-MM-DD (a day in the week) or -N; default: current")
+    p = sub.add_parser("day", parents=common, help="day summary, 24-hour graph and hour table")
+    p.add_argument("period", nargs="?", help="YYYY-MM-DD or -N; default: today")
+    p = sub.add_parser("now", parents=common, help="live watts per device and the month so far")
+    p.add_argument("--watch", action="store_true", help="refresh every 5 s (Ctrl+C to stop)")
+
+    p = sub.add_parser("export", parents=common, help="export energy per hour or day (CSV or JSON)")
+    p.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD", help="first day (default: 30 days ago)")
+    p.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD", help="last day, inclusive (default: today)")
+    p.add_argument("--bucket", choices=("hour", "day"), default="day")
+    p.add_argument("--csv", action="store_true", help="CSV output (default)")
+
+    p = sub.add_parser("demo-data", parents=common, help="fill a database with realistic fake history")
+    p.add_argument("--days", type=int, default=60)
+
     sub.add_parser("status", parents=common, help="collector health, sources, last sample, recent events")
     sub.add_parser(
         "doctor", parents=common, help="check sources, permissions, service and database; print fixes"
@@ -254,3 +272,181 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             print(f"    fix: {check.fix}")
         problems += check.level == "fail"
     return 1 if problems else 0
+
+
+# ---------------------------------------------------------------- reports
+
+
+class _Ctx:
+    """Settings, estimate, time zone and output options for one report command."""
+
+    def __init__(self, args: argparse.Namespace):
+        import shutil
+
+        from pcenergy import periods
+
+        self.settings, warnings = cfg.load_user()
+        for w in warnings:
+            print(f"warning: {w}", file=sys.stderr)
+        self.est = query.Estimate.from_settings(self.settings)
+        self.tz = periods.local_tz()
+        self.devices = args.devices or self.settings["default_devices"]
+        self.ascii = bool(args.ascii) or self.settings["graph_style"] == "ascii"
+        self.st = Styler(color_enabled(bool(args.no_color), self.settings["color"]))
+        self.width = max(min(shutil.get_terminal_size((100, 24)).columns, 160), 60)
+        self.path, self.conn = _open_ro(args)
+
+    def period(self, kind: str, arg: str | None):
+        from pcenergy import periods
+
+        try:
+            return periods.parse_period(kind, arg, self.settings, self.tz)
+        except ValueError as exc:
+            raise cfg.ConfigError(str(exc)) from None
+
+    def print(self, lines) -> None:
+        print(self.st.lines(lines))
+
+
+def _report(args: argparse.Namespace, kind: str) -> int:
+    from datetime import datetime
+
+    from pcenergy.render import report
+
+    c = _Ctx(args)
+    p = c.period(kind, args.period)
+    bucket = "hour" if kind == "day" else "day"
+    summ = query.summary(c.conn, p, c.devices, c.est, tz=c.tz)
+    ser = query.series(c.conn, p, bucket, c.devices, c.est, c.settings["week_start"], tz=c.tz)
+    if args.json:
+        print(json.dumps({"summary": query.to_dict(summ), "series": query.to_dict(ser)}, indent=2))
+        return 0
+    title = {"month": f"{p.start:%B %Y}", "week": f"Week {p.label}", "day": f"{p.start:%a %d %b %Y}"}[kind]
+    rng = "" if kind == "day" else f"({p.range_text()})  "
+    c.print([[(f" {title} ", "bold"), (f"{rng}devices: {c.devices}", "dim")]])
+    c.print(report.summary_lines(summ, "Total" if not summ.period.in_progress else "So far"))
+    print()
+    unit = c.settings["day_graph_unit"] if kind == "day" else "kWh"
+    today = datetime.now(c.tz).date().isoformat()
+    c.print(report.graph(ser, c.width, 10 if kind != "day" else 8, unit, c.ascii, today=today))
+    print()
+    first = {"month": "Day", "week": "Day", "day": "Hour"}[kind]
+    c.print(report.bucket_table(ser, first, c.est.currency_symbol, c.est.price_per_kwh))
+    return 0
+
+
+def _cmd_month(args: argparse.Namespace) -> int:
+    return _report(args, "month")
+
+
+def _cmd_week(args: argparse.Namespace) -> int:
+    return _report(args, "week")
+
+
+def _cmd_day(args: argparse.Namespace) -> int:
+    return _report(args, "day")
+
+
+def _cmd_now(args: argparse.Namespace) -> int:
+    import time
+    from datetime import datetime
+
+    from pcenergy import periods
+    from pcenergy.render.text import DEVICE_NAMES, DEVICE_ORDER
+    from pcenergy.units import fmt_energy, fmt_watts
+
+    c = _Ctx(args)
+    while True:
+        lv = query.live(c.conn, c.devices, c.est)
+        month = periods.month_period(datetime.now(c.tz).date(), c.settings["month_start_day"], c.tz)
+        summ = query.summary(c.conn, month, c.devices, c.est, tz=c.tz)
+        if args.json:
+            print(json.dumps({"live": query.to_dict(lv), "month": query.to_dict(summ)}, indent=2))
+            return 0
+        out = []
+        health = {"ok": "ok", "stale": "warn", "none": "err"}[lv.health]
+        out.append(
+            c.st.paint(f"● {lv.health}", health) + c.st.paint(f"  sample {fmt_age(lv.sample_age_s)}", "dim")
+        )
+        out.append(c.st.paint(f"{'':<10} {'now':>8}   month {month.label} so far", "dim"))
+        for d in DEVICE_ORDER:
+            if d not in summ.per_device_kwh:
+                continue
+            est_mark = d in ("rest", "monitor")
+            w = lv.watts.get(d)
+            now_txt = ("~" if est_mark and w is not None else "") + fmt_watts(w)
+            out.append(
+                f"{c.st.paint(f'{DEVICE_NAMES[d]:<10}', d)} {now_txt:>8}   "
+                f"{fmt_energy(summ.per_device_kwh[d], est_mark)}"
+            )
+        total_now = ("~" if lv.total_is_estimate and lv.total_w else "") + fmt_watts(lv.total_w)
+        out.append(
+            c.st.paint(
+                f"{'Total':<10} {total_now:>8}   {fmt_energy(summ.total_kwh, summ.total_is_estimate)}"
+                f"  {c.est.currency_symbol}{summ.cost:.2f}",
+                "bold",
+            )
+        )
+        if args.watch:
+            print("\x1b[H\x1b[2J" + "\n".join(out), flush=True)
+            time.sleep(5)
+            continue
+        print("\n".join(out))
+        return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    import csv
+    from datetime import date, datetime, timedelta
+
+    from pcenergy import periods
+
+    c = _Ctx(args)
+    today = datetime.now(c.tz).date()
+    try:
+        d_to = date.fromisoformat(args.date_to) if args.date_to else today
+        d_from = date.fromisoformat(args.date_from) if args.date_from else d_to - timedelta(days=29)
+    except ValueError as exc:
+        raise cfg.ConfigError(f"bad date: {exc}") from None
+    if d_from > d_to:
+        raise cfg.ConfigError("--from is after --to")
+    span = periods.Period(
+        "range",
+        periods.day_period(d_from, c.tz).start,
+        periods.day_period(d_to, c.tz).end,
+        f"{d_from}..{d_to}",
+    )
+    ser = query.series(c.conn, span, args.bucket, c.devices, c.est, c.settings["week_start"], tz=c.tz)
+    if args.json:
+        print(json.dumps(query.to_dict(ser), indent=2))
+        return 0
+    devices = list(ser.buckets[0].per_device_kwh) if ser.buckets else []
+    w = csv.writer(sys.stdout)
+    w.writerow(["start", *[f"{d}_kwh" for d in devices], "total_kwh", "cost", "on_hours"])
+    for b in ser.buckets:
+        if b.future:
+            continue
+        w.writerow(
+            [
+                b.start,
+                *[f"{b.per_device_kwh[d]:.4f}" for d in devices],
+                f"{b.total_kwh:.4f}",
+                f"{b.total_kwh * c.est.price_per_kwh:.4f}",
+                f"{b.on_s / 3600:.3f}",
+            ]
+        )
+    return 0
+
+
+def _cmd_demo_data(args: argparse.Namespace) -> int:
+    from pcenergy import demo
+
+    path = cfg.db_path(args.db)
+    if path == cfg.DEFAULT_DB_PATH:
+        raise cfg.ConfigError(
+            "refusing to write demo data to the real database; pass --db or set PCENERGY_DB"
+        )
+    conn = storage.connect_rw(path)
+    n = demo.fill(conn, args.days)
+    print(f"wrote {n} samples ({args.days} days) to {path}")
+    return 0
