@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bucket", choices=("hour", "day"), default="day")
     p.add_argument("--csv", action="store_true", help="CSV output (default)")
 
+    p = sub.add_parser("serve", parents=common, help="read-only HTTP JSON API (default 127.0.0.1:8787)")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--cors", metavar="ORIGIN", help="send Access-Control-Allow-Origin: ORIGIN")
+
     p = sub.add_parser("demo-data", parents=common, help="fill a database with realistic fake history")
     p.add_argument("--days", type=int, default=60)
 
@@ -452,3 +457,12 @@ def _cmd_demo_data(args: argparse.Namespace) -> int:
     n = demo.fill(conn, args.days)
     print(f"wrote {n} samples ({args.days} days) to {path}")
     return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import logging
+
+    from pcenergy.api import serve
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    return serve(cfg.db_path(args.db), args.host, args.port, args.cors)

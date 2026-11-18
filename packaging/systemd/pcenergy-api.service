@@ -1,0 +1,15 @@
+# Optional user service for the read-only API (systemd --user). Off by default.
+#   mkdir -p ~/.config/systemd/user && cp packaging/systemd/pcenergy-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now pcenergy-api
+[Unit]
+Description=pcenergy read-only HTTP API (127.0.0.1:8787)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pcenergy serve --host 127.0.0.1 --port 8787
+Restart=on-failure
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
